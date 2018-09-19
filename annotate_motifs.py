@@ -172,7 +172,7 @@ def create_motif_annotations():
             line = line[:-2]
             if line[0] == '#':
                 ma['comments'] += '<b>'+ line + '</b><br>'
-            if line[:9] == 'fragment_':
+            if line.startswith('fragment_'):
                 feature = {'name': line, 'type': 'fragment', 'substr': []}
                 massbin, weight = line[9:-1].split(',')
                 massbin = float(massbin)
@@ -180,18 +180,17 @@ def create_motif_annotations():
                         filter(Fragment.scanid.in_([scan[s]+1 for s in motifspectra[motif] if s in scan])).\
                         filter(between(Fragment.mz, massbin-0.0025, massbin+0.0025)).\
                         join(Molecule, Fragment.molid==Molecule.molid).all()
-            if line[:5] == 'loss_':
+            if line.startswith('loss_'):
                 feature = {'name': line, 'type': 'loss', 'substr': []}
                 massbin, weight = line[5:-1].split(',')
                 massbin = float(massbin)
                 frag_alias = aliased(Fragment)
-                mol_alias = aliased(Molecule)
-                matching_frags = db_session.query(Fragment, mol_alias.mol).\
+                matching_frags = db_session.query(Fragment, Molecule.mol).\
                         filter(Fragment.scanid.in_([scan[s]+1 for s in motifspectra[motif] if s in scan])).\
                         join(frag_alias, Fragment.parentfragid==frag_alias.fragid).\
                         filter(between(frag_alias.mz - Fragment.mz, massbin-0.0025, massbin+0.0025)).\
-                        join(mol_alias, Fragment.molid==mol_alias.molid).all()
-            if line[:9] == 'fragment_' or line[:5] == 'loss_':
+                        join(Molecule, Fragment.molid==Molecule.molid).all()
+            if line.startswith('fragment_') or line.startswith('loss_'):
                 frags = {}
                 for frag, molblock in matching_frags:
                     smiles = frag.smiles if feature['type'] == 'fragment' else loss2smiles(molblock, frag.atoms)
@@ -208,7 +207,7 @@ def create_motif_annotations():
                             substr['mol'] = Chem.MolToMolBlock(mol)
                         except:
                             pass
-                    for match in matches:
+                    for frag, molblock in matches:
                         substr['matches'].append({
                             'spectrum': spectrum[frag.scanid-1],
                             'mz': frag.mz,
