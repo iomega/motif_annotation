@@ -37,12 +37,14 @@ from rdkit.Chem import AllChem
 from itertools import groupby
 from chemspipy import ChemSpider
 import json
+sys.path.insert(0, './ms2ldaviz/lda/code')
+from ms2lda_feature_extraction import *
 
 
 # --- globals ---
-mspfile = open(sys.argv[1], 'r')
+path = sys.argv[1]
 magmadb = sys.argv[2]
-spectrumid = sys.argv[3]
+minrelint = float(sys.argv[3])
 mappingfile = sys.argv[4]
 motifpath = sys.argv[5]
 
@@ -83,58 +85,47 @@ def loss2smiles(molblock, atomlist):
     return Chem.MolToSmiles(frag)
 
 
-def parse_mspfile():
-    "Parse mspfile store spectra in a MAGMa database"
-
+def read_spectra():
     rt = 1
-    while True:
-        l = mspfile.readline()
-        if l == '':
-            break
-        l = l.rstrip('\n\r')
-        if l[:5] == "NAME:":
-            name = l[6:]
-        if l[:12] == 'PRECURSORMZ:':
-            pmz = float(l[13:])
-        if l[:7] == 'SMILES:':
-            smiles = l[8:]
-        if l[:9] == 'INCHIKEY:' and not db_exists:
-            results = cs.search(l[10:])
-            if results:
-                molid = struct_engine.add_structure(results[0].mol_2d, name, 0.0, 0)
+    peaklists={}
+    for i in ms1:
+        peaklists[rt] = []
+        meta = metadata[i.name]
+        compound = meta['compound'].replace('"','')
+        csresults = cs.search(meta['InChIKey'])
+        if not db_exists:
+            if csresults:
+                molid = struct_engine.add_structure(csresults[0].mol_2d, compound, 0.0, 0)
             else:
-                sys.stderr.write('--> No Chemspider for ' + name + '\n')
-                molid = struct_engine.add_smiles(smiles, name)
-        if l[:len(spectrumid)] == spectrumid:
-            scan[l[len(spectrumid)+1:]] = rt
-            spectrum[rt] = l[len(spectrumid)+1:]
-        if l[:10] == 'Num Peaks:' and pmz < 1000:
-            if not db_exists:
-                peaklist = []
-                for i in range(int(l[11:])):
-                    mz, intensity = mspfile.readline().rstrip('\n\r').split()
-                    peak = [float(mz), float(intensity)]
-                    if peak not in peaklist:
-                        peaklist.append(peak)
+                sys.stderr.write('--> No Chemspider for ' + compound + '\n')
+                molid = struct_engine.add_smiles(meta['smiles'], compound)
+            if molid in scans_for_molid:
+                scans_for_molid[molid].append(rt)
+            else:
+                scans_for_molid[molid] = [rt]
+        scan[i.name] = rt
+        spectrum[rt] = i.name
+        rt += 2
+    if not db_exists:
+        for i in ms2:
+            peaklists[scan[i[3].name]].append([i[0], i[2]])
+        for rt in peaklists:
+            if len(peaklists[rt]) > 0:
+                maxint = sorted(peaklists[rt], key = lambda p: p[1])[-1][1]
+                peaklist = [p for p in peaklists[rt] if p[1] > minrelint * maxint]
                 ms_data_engine.store_peak_list(
                     rt,
                     rt,
-                    pmz,
-                    [pmz, 10000],
-                    peaklist
-                    )
-                if molid in scans_for_molid:
-                    scans_for_molid[molid].append(rt)
-                else:
-                    scans_for_molid[molid] = [rt]
-            rt += 2
+                    metadata[spectrum[rt]]['parentmass'],
+                    [metadata[spectrum[rt]]['parentmass'], 10000],
+                    peaklist)
 
 
 def run_magma_annotate():
     for molid in scans_for_molid:
         annotate_engine.scans = []
         annotate_engine.build_spectra(scans_for_molid[molid])
-        annotate_engine.search_structures(molids = [molid], fast=True, ncpus=3)
+        annotate_engine.search_structures(molids = [molid], fast=True)
         magma_session.commit()
 
 
@@ -148,9 +139,9 @@ def read_motif_mapping():
             continue
         f,m,p,null,null,null,name = [a.replace('"','') for a in line[:-1].split('","')]
         if m in motifspectra:
-            motifspectra[m].append(f[:-3])
+            motifspectra[m].append(f)
         else:
-            motifspectra[m] = [f[:-3]]
+            motifspectra[m] = [f]
 
 
 def create_motif_annotations():
@@ -195,9 +186,9 @@ def create_motif_annotations():
                 for frag, molblock in matching_frags:
                     smiles = frag.smiles if feature['type'] == 'fragment' else loss2smiles(molblock, frag.atoms)
                     if smiles in frags:
-                        frags[smiles].append([frag, molblock.replace('\n','\\n')])
+                        frags[smiles].append([frag, molblock])
                     else:
-                        frags[smiles] = [[frag, molblock.replace('\n','\\n')]]
+                        frags[smiles] = [[frag, molblock]]
                 for smiles, matches in sorted(frags.iteritems(), key = lambda (k,v): len(v), reverse = True):
                     substr = {'smiles': smiles, 'matches': []}
                     if feature['type'] == 'fragment':
@@ -212,16 +203,31 @@ def create_motif_annotations():
                             'spectrum': spectrum[frag.scanid-1],
                             'mz': frag.mz,
                             'scan': frag.scanid - 1,
-                            'mol': molblock, #.replace('\n','\\n'),
+                            'mol': molblock,
                             'fragatoms': frag.atoms
                             })
                     feature['substr'].append(substr)
                 ma['features'].append(feature)
         motifannotations.append(ma)
 
+class stdout2stderr(list):
+    def __enter__(self):
+        self._stdout = sys.stdout
+        sys.stdout = sys.stderr
+        return self
+    def __exit__(self, *args):
+        sys.stdout = self._stdout
 
 # MAIN
-parse_mspfile()
+import glob
+if os.path.isdir(path):
+    files = glob.glob(path+'/*')
+else:
+    files = [path]
+loader = LoadGNPS()
+with stdout2stderr():
+    ms1, ms2, metadata = loader.load_spectra(files)
+read_spectra()
 if not db_exists:
     run_magma_annotate()
 read_motif_mapping()

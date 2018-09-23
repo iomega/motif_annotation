@@ -96,7 +96,7 @@ function show_mol(id, molblock, fragatoms="", type="loss") {
 def write_motif_annotations():
     viewid = 0
     for motif in motifannotations:
-        print motif['comments']
+        print motif['comments'].encode('utf-8')
         for feature in motif['features']:
             print '<p style="clear: both"><br><u>' + feature['name'] + '</u><br></p>'
             for substr in feature['substr']:
