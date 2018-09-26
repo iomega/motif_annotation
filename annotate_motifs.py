@@ -39,13 +39,14 @@ from chemspipy import ChemSpider
 import json
 sys.path.insert(0, './ms2ldaviz/lda/code')
 from ms2lda_feature_extraction import *
+import requests
 
 
 # --- globals ---
 path = sys.argv[1]
 magmadb = sys.argv[2]
 minrelint = float(sys.argv[3])
-mappingfile = sys.argv[4]
+experiment_id = sys.argv[4]
 motifpath = sys.argv[5]
 
 # if magmadb exists it is reused, skipping the parts that create and run the magma job 
@@ -62,6 +63,7 @@ if not db_exists:
                       msms_intensity_cutoff=0)
 
 cs = ChemSpider('b07b7eb2-0ba7-40db-abc3-2a77a7544a3d')
+server_address = "http://ms2lda.org/"
 
 spectrum = {} # dict containing de spectrum name for a scanid
 scan = {} # dict containing de scanid for a spectrum name
@@ -92,8 +94,8 @@ def read_spectra():
         peaklists[rt] = []
         meta = metadata[i.name]
         compound = meta['compound'].replace('"','')
-        csresults = cs.search(meta['InChIKey'])
         if not db_exists:
+            csresults = cs.search(meta['InChIKey'])
             if csresults:
                 molid = struct_engine.add_structure(csresults[0].mol_2d, compound, 0.0, 0)
             else:
@@ -134,10 +136,9 @@ def read_motif_mapping():
     """
     motifspectra = {motifname: [spectra]}
     """
-    for line in open(mappingfile, 'r'):
-        if line[:10] == '"Document"':
-            continue
-        f,m,p,null,null,null,name = [a.replace('"','') for a in line[:-1].split('","')]
+    url = server_address + 'basicviz/get_doc_m2m/{}'.format(experiment_id)
+    response = requests.get(url)
+    for m, f, null, null in response.json():
         if m in motifspectra:
             motifspectra[m].append(f)
         else:
