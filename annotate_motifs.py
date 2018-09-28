@@ -123,10 +123,11 @@ def read_motif_mapping():
     url = server_address + 'basicviz/get_doc_m2m/{}'.format(args.experiment_id)
     response = requests.get(url)
     for m, f, p, o in response.json():
-        if m in motifspectra:
-            motifspectra[m].append(f)
-        else:
-            motifspectra[m] = [f]
+        if float(p) >= args.doc_m2m_prob_threshold and float(o) >= args.doc_m2m_overlap_threshold:
+            if m in motifspectra:
+                motifspectra[m].append(f)
+            else:
+                motifspectra[m] = [f]
 
 
 def create_motif_annotations():
@@ -206,6 +207,8 @@ class stdout2stderr(list):
 def arg_parser():
     ap = ArgumentParser(description=__doc__, formatter_class=RawDescriptionHelpFormatter)
     ap.add_argument('-v', '--version', action='version', version='%(prog)s ' + str(version))
+    ap.add_argument('-o', '--doc_m2m_overlap_threshold', help="Threshold on motif-spectrum overlap score (default: %(default)s)", default=0.3, type=float)
+    ap.add_argument('-p', '--doc_m2m_prob_threshold', help="Threshold on motif-spectrum probability (default: %(default)s)", default=0.01, type=float)
     ap.add_argument('-i', '--minrelint', help="Threshold on intensity relative to basepeak (default: %(default)s)", default=0.05, type=float)
     ap.add_argument('-c', '--chemspider', help="Get structures from ChemSpider (default: %(default)s)", default=False, action='store_true')
     ap.add_argument('experiment_id', help="Experiment ID", type=int)
