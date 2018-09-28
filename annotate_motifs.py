@@ -5,10 +5,11 @@ Writes json to stdout, according to following schema:
  
 motifannotations = [{
     'name': 'motif name',
-    'comments': 'comments'
+    'annotations': [annotations],
     'features': [{
         'name': 'feature name',
-        'type': 'loss' or 'fragment'
+        'probability': probability,
+        'type': 'loss' or 'fragment',
         'substr' [{
             'smiles': 'smiles',
             'mol': 'molblock',
@@ -137,63 +138,59 @@ def create_motif_annotations():
     session.configure(bind=engine)
     db_session = session()
 
-    # parse MS2LDA motifs
-    for motif in sorted(motifspectra, key=lambda k: int(k[6:])):
-        try:
-            motiffile = open(args.motif_path + motif + '.m2m')
-        except:
-            continue
-        ma = {'name': motif, 'comments': '', 'features': []}
+    url = server_address + 'basicviz/get_annotated_topics/{}'.format(args.experiment_id)
+    if args.all_motifs:
+        url = server_address + 'basicviz/get_all_topics/{}'.format(args.experiment_id)
+    response = requests.get(url)
+    motif_annotations = {l[0]:l[1:] for l in response.json()[0]}
+    motifs = {l[0]:l[1] for l in response.json()[1]}
+
+    for name in sorted(motifs, key=lambda k: int(k[6:])):
+        ma = {'name': name, 'annotations': motif_annotations[name], 'features': []}
         # read fragments and losses
-        for line in motiffile:
-            line = line[:-2]
-            if line[0] == '#':
-                ma['comments'] += '<b>'+ line + '</b><br>'
-            if line.startswith('fragment_'):
-                feature = {'name': line, 'type': 'fragment', 'substr': []}
-                massbin, weight = line[9:-1].split(',')
-                massbin = float(massbin)
+        for f in motifs[name]:
+            feature_type, massbin = f[0].split('_')
+            feature = {'name': f[0], 'probability': float(f[1]), 'type': feature_type, 'substr': []}
+            massbin = float(massbin)
+            if feature_type == 'fragment':
                 matching_frags = db_session.query(Fragment, Molecule.mol).\
-                        filter(Fragment.scanid.in_([scan[s]+1 for s in motifspectra[motif] if s in scan])).\
+                        filter(Fragment.scanid.in_([scan[s]+1 for s in motifspectra[name] if s in scan])).\
                         filter(between(Fragment.mz, massbin-0.0025, massbin+0.0025)).\
                         join(Molecule, Fragment.molid==Molecule.molid).all()
-            if line.startswith('loss_'):
-                feature = {'name': line, 'type': 'loss', 'substr': []}
-                massbin, weight = line[5:-1].split(',')
-                massbin = float(massbin)
+            else:
                 frag_alias = aliased(Fragment)
                 matching_frags = db_session.query(Fragment, Molecule.mol).\
-                        filter(Fragment.scanid.in_([scan[s]+1 for s in motifspectra[motif] if s in scan])).\
+                        filter(Fragment.scanid.in_([scan[s]+1 for s in motifspectra[name] if s in scan])).\
                         join(frag_alias, Fragment.parentfragid==frag_alias.fragid).\
                         filter(between(frag_alias.mz - Fragment.mz, massbin-0.0025, massbin+0.0025)).\
                         join(Molecule, Fragment.molid==Molecule.molid).all()
-            if line.startswith('fragment_') or line.startswith('loss_'):
-                frags = {}
-                for frag, molblock in matching_frags:
-                    smiles = frag.smiles if feature['type'] == 'fragment' else loss2smiles(molblock, frag.atoms)
-                    if smiles in frags:
-                        frags[smiles].append([frag, molblock])
-                    else:
-                        frags[smiles] = [[frag, molblock]]
-                for smiles, matches in sorted(frags.iteritems(), key = lambda (k,v): len(v), reverse = True):
-                    substr = {'smiles': smiles, 'matches': []}
-                    if feature['type'] == 'fragment':
-                        try:
-                            mol = Chem.MolFromSmiles(substr['smiles'])
-                            AllChem.Compute2DCoords(mol)
-                            substr['mol'] = Chem.MolToMolBlock(mol)
-                        except:
-                            pass
-                    for frag, molblock in matches:
-                        substr['matches'].append({
-                            'spectrum': spectrum[frag.scanid-1],
-                            'mz': frag.mz,
-                            'scan': frag.scanid - 1,
-                            'mol': molblock,
-                            'fragatoms': frag.atoms
-                            })
-                    feature['substr'].append(substr)
-                ma['features'].append(feature)
+            frags = {}
+            for frag, molblock in matching_frags:
+                smiles = frag.smiles if feature_type == 'fragment' else loss2smiles(molblock, frag.atoms)
+                if smiles in frags:
+                    frags[smiles].append([frag, molblock])
+                else:
+                    frags[smiles] = [[frag, molblock]]
+            for smiles, matches in sorted(frags.iteritems(), key = lambda (k,v): len(v), reverse = True):
+                substr = {'smiles': smiles, 'matches': []}
+                if feature_type == 'fragment':
+                    try:
+                        mol = Chem.MolFromSmiles(substr['smiles'])
+                        AllChem.Compute2DCoords(mol)
+                        substr['mol'] = Chem.MolToMolBlock(mol)
+                    except:
+                        pass
+                for frag, molblock in matches:
+                    substr['matches'].append({
+                        'spectrum': spectrum[frag.scanid-1],
+                        'mz': frag.mz,
+                        'scan': frag.scanid - 1,
+                        'mol': molblock,
+                        'fragatoms': frag.atoms
+                        })
+                feature['substr'].append(substr)
+            ma['features'].append(feature)
+        ma['features'].sort(key=lambda k: k['probability'], reverse=True)
         motifannotations.append(ma)
 
 class stdout2stderr(list):
@@ -211,10 +208,10 @@ def arg_parser():
     ap.add_argument('-p', '--doc_m2m_prob_threshold', help="Threshold on motif-spectrum probability (default: %(default)s)", default=0.01, type=float)
     ap.add_argument('-i', '--minrelint', help="Threshold on intensity relative to basepeak (default: %(default)s)", default=0.05, type=float)
     ap.add_argument('-c', '--chemspider', help="Get structures from ChemSpider (default: %(default)s)", default=False, action='store_true')
+    ap.add_argument('-a', '--all_motifs', help="Process not only the annotated motifs (default: %(default)s)", default=False, action='store_true')
     ap.add_argument('experiment_id', help="Experiment ID", type=int)
     ap.add_argument('magma_db', help="(Non-)existing magma database", type=str)
     ap.add_argument('spectra_path', help="path to spectra", type=str)
-    ap.add_argument('motif_path', help="path to motifs", type=str)
     return ap
 
 
