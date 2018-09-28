@@ -1,9 +1,6 @@
 """
 Script to annotate MS2LDA motifs using MAGMa
 
-Usage: python annotate_motifs.py mspfile.mps magmadb.db field_containing_spectrumid ms2lda.csv path_to_motifs_including_prefix > annotation.json
-
-
 Writes json to stdout, according to following schema:
  
 motifannotations = [{
@@ -40,27 +37,11 @@ import json
 sys.path.insert(0, './ms2ldaviz/lda/code')
 from ms2lda_feature_extraction import *
 import requests
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
 
 
 # --- globals ---
-path = sys.argv[1]
-magmadb = sys.argv[2]
-minrelint = float(sys.argv[3])
-experiment_id = sys.argv[4]
-motifpath = sys.argv[5]
-
-# if magmadb exists it is reused, skipping the parts that create and run the magma job 
-db_exists = os.path.isfile(magmadb)
-if not db_exists:
-    magma_session =   magma.MagmaSession(magmadb, 'ms2lda_dataset', 'debug')
-    ms_data_engine =  magma_session.get_ms_data_engine(
-                      abs_peak_cutoff=0,
-                      mz_precision=20,
-                      mz_precision_abs=0.005)
-    struct_engine =   magma_session.get_structure_engine(pubchem_names=False)
-    annotate_engine = magma_session.get_annotate_engine(
-                      ms_intensity_cutoff=0,
-                      msms_intensity_cutoff=0)
+version = '0.1.0'
 
 cs = ChemSpider('b07b7eb2-0ba7-40db-abc3-2a77a7544a3d')
 server_address = "http://ms2lda.org/"
@@ -95,11 +76,14 @@ def read_spectra():
         meta = metadata[i.name]
         compound = meta['compound'].replace('"','')
         if not db_exists:
-            csresults = cs.search(meta['InChIKey'])
-            if csresults:
-                molid = struct_engine.add_structure(csresults[0].mol_2d, compound, 0.0, 0)
+            if args.chemspider:
+                csresults = cs.search(meta['InChIKey'])
+                if csresults:
+                    molid = struct_engine.add_structure(csresults[0].mol_2d, compound, 0.0, 0)
+                else:
+                    sys.stderr.write('--> No Chemspider for ' + compound + '\n')
+                    molid = struct_engine.add_smiles(meta['smiles'], compound)
             else:
-                sys.stderr.write('--> No Chemspider for ' + compound + '\n')
                 molid = struct_engine.add_smiles(meta['smiles'], compound)
             if molid in scans_for_molid:
                 scans_for_molid[molid].append(rt)
@@ -114,7 +98,7 @@ def read_spectra():
         for rt in peaklists:
             if len(peaklists[rt]) > 0:
                 maxint = sorted(peaklists[rt], key = lambda p: p[1])[-1][1]
-                peaklist = [p for p in peaklists[rt] if p[1] > minrelint * maxint]
+                peaklist = [p for p in peaklists[rt] if p[1] > args.minrelint * maxint]
                 ms_data_engine.store_peak_list(
                     rt,
                     rt,
@@ -136,9 +120,9 @@ def read_motif_mapping():
     """
     motifspectra = {motifname: [spectra]}
     """
-    url = server_address + 'basicviz/get_doc_m2m/{}'.format(experiment_id)
+    url = server_address + 'basicviz/get_doc_m2m/{}'.format(args.experiment_id)
     response = requests.get(url)
-    for m, f, null, null in response.json():
+    for m, f, p, o in response.json():
         if m in motifspectra:
             motifspectra[m].append(f)
         else:
@@ -147,7 +131,7 @@ def read_motif_mapping():
 
 def create_motif_annotations():
     # create sqlalchemy connection to magma database
-    engine = create_engine('sqlite:///' + magmadb)
+    engine = create_engine('sqlite:///' + args.magma_db)
     session = sessionmaker()
     session.configure(bind=engine)
     db_session = session()
@@ -155,7 +139,7 @@ def create_motif_annotations():
     # parse MS2LDA motifs
     for motif in sorted(motifspectra, key=lambda k: int(k[6:])):
         try:
-            motiffile = open(motifpath + motif + '.m2m')
+            motiffile = open(args.motif_path + motif + '.m2m')
         except:
             continue
         ma = {'name': motif, 'comments': '', 'features': []}
@@ -219,16 +203,45 @@ class stdout2stderr(list):
     def __exit__(self, *args):
         sys.stdout = self._stdout
 
+def arg_parser():
+    ap = ArgumentParser(description=__doc__, formatter_class=RawDescriptionHelpFormatter)
+    ap.add_argument('-v', '--version', action='version', version='%(prog)s ' + str(version))
+    ap.add_argument('-i', '--minrelint', help="Threshold on intensity relative to basepeak (default: %(default)s)", default=0.05, type=float)
+    ap.add_argument('-c', '--chemspider', help="Get structures from ChemSpider (default: %(default)s)", default=False, action='store_true')
+    ap.add_argument('experiment_id', help="Experiment ID", type=int)
+    ap.add_argument('magma_db', help="(Non-)existing magma database", type=str)
+    ap.add_argument('spectra_path', help="path to spectra", type=str)
+    ap.add_argument('motif_path', help="path to motifs", type=str)
+    return ap
+
+
 # MAIN
 import glob
-if os.path.isdir(path):
-    files = glob.glob(path+'/*')
+
+args = arg_parser().parse_args(sys.argv[1:])
+
+# if magma_db exists it is reused, skipping the parts that create and run the magma job
+db_exists = os.path.isfile(args.magma_db)
+if not db_exists:
+    magma_session =   magma.MagmaSession(args.magma_db, 'ms2lda_dataset', 'debug')
+    ms_data_engine =  magma_session.get_ms_data_engine(
+                      abs_peak_cutoff=0,
+                      mz_precision=20,
+                      mz_precision_abs=0.005)
+    struct_engine =   magma_session.get_structure_engine(pubchem_names=False)
+    annotate_engine = magma_session.get_annotate_engine(
+                      ms_intensity_cutoff=0,
+                      msms_intensity_cutoff=0)
+
+if os.path.isdir(args.spectra_path):
+    files = glob.glob(args.spectra_path + '/*')
 else:
-    files = [path]
+    files = [args.spectra_path]
 loader = LoadGNPS()
 with stdout2stderr():
     ms1, ms2, metadata = loader.load_spectra(files)
 read_spectra()
+
 if not db_exists:
     run_magma_annotate()
 read_motif_mapping()
