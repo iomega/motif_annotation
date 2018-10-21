@@ -1,5 +1,5 @@
 """
-Script to annotate MS2LDA motifs using MAGMa
+Script to annotate MS2LDA documents using MAGMa
 
 Writes json to stdout, according to following schema:
  
@@ -48,6 +48,7 @@ scan = {} # dict containing de scanid for a spectrum name
 scans_for_molid = {} # dict containing lists of scanids for each molid
 motifspectra = {}
 doc_annotations = []
+loaders = {'GNPS': LoadGNPS, 'MSP': LoadMSP}
 
 
 def loss2smiles(molblock, atomlist):
@@ -71,7 +72,7 @@ def read_spectra():
     for i in ms1:
         peaklists[rt] = []
         meta = metadata[i.name]
-        compound = meta['compound'].replace('"','')
+        compound = meta['annotation'].replace('"','')
         if not db_exists:
             if args.chemspider:
                 csresults = cs.search(meta['InChIKey'][:14])
@@ -178,6 +179,7 @@ def arg_parser():
     ap.add_argument('-v', '--version', action='version', version='%(prog)s ' + str(version))
     ap.add_argument('-i', '--minrelint', help="Threshold on intensity relative to basepeak (default: %(default)s)", default=0.05, type=float)
     ap.add_argument('-c', '--chemspider', help="Get structures from ChemSpider (default: %(default)s)", default=False, action='store_true')
+    ap.add_argument('-l', '--loader', help="Specify which loader to use (default: %(default)s)", default='GNPS', choices=['GNPS','MSP'])
     ap.add_argument('experiment_id', help="Experiment ID", type=int)
     ap.add_argument('magma_db', help="(Non-)existing magma database", type=str)
     ap.add_argument('spectra_path', help="path to spectra", type=str)
@@ -206,7 +208,7 @@ if os.path.isdir(args.spectra_path):
     files = glob.glob(args.spectra_path + '/*')
 else:
     files = [args.spectra_path]
-loader = LoadGNPS()
+loader = loaders[args.loader]()
 with stdout2stderr():
     ms1, ms2, metadata = loader.load_spectra(files)
 read_spectra()
