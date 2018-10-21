@@ -96,7 +96,10 @@ function show_mol(id, molblock, fragatoms="", type="loss") {
 def write_motif_annotations():
     viewid = 0
     for motif in motifannotations:
-        print '<p style="clear: both"><br><b><u>{}</u><br>{}</b></p>'.format(motif['name'], '<br>'.join(motif['annotations']).encode('utf-8'))
+        print '<p style="clear: both"><br><b><u>{}</u>'.format(motif['name'])
+        if None not in motif['annotations']:
+            print '<br>{}</b>'.format('<br>'.join(motif['annotations']).encode('utf-8'))
+        print '</p>'
         for feature in motif['features']:
             print '<p style="clear: both"><br><u>{}, {}</u><br></p>'.format(feature['name'], feature['probability'])
             for substr in feature['substr']:
