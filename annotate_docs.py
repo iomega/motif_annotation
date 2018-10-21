@@ -178,6 +178,7 @@ def arg_parser():
     ap = ArgumentParser(description=__doc__, formatter_class=RawDescriptionHelpFormatter)
     ap.add_argument('-v', '--version', action='version', version='%(prog)s ' + str(version))
     ap.add_argument('-i', '--minrelint', help="Threshold on intensity relative to basepeak (default: %(default)s)", default=0.05, type=float)
+    ap.add_argument('-m', '--mode', help="Ionisation mode (default: %(default)s)", default=1, choices=[-1,1], type=float)
     ap.add_argument('-c', '--chemspider', help="Get structures from ChemSpider (default: %(default)s)", default=False, action='store_true')
     ap.add_argument('-l', '--loader', help="Specify which loader to use (default: %(default)s)", default='GNPS', choices=['GNPS','MSP'])
     ap.add_argument('experiment_id', help="Experiment ID", type=int)
@@ -196,6 +197,7 @@ db_exists = os.path.isfile(args.magma_db)
 if not db_exists:
     magma_session =   magma.MagmaSession(args.magma_db, 'ms2lda_dataset', 'debug')
     ms_data_engine =  magma_session.get_ms_data_engine(
+                      ionisation_mode=args.mode,
                       abs_peak_cutoff=0,
                       mz_precision=20,
                       mz_precision_abs=0.005)
