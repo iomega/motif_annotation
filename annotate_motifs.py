@@ -184,6 +184,8 @@ def create_motif_annotations():
                     except:
                         pass
                 for frag, molblock in matches:
+                    if [frag.scanid - 1, frag.atoms] in [[m['scan'], m['fragatoms']] for m in substr['matches']]:
+                        continue # avoid redundant matches
                     substr['matches'].append({
                         'spectrum': spectrum[frag.scanid-1],
                         'mz': frag.mz,
