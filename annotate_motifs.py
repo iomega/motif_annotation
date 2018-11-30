@@ -147,6 +147,8 @@ def create_motif_annotations():
     motifs = {l[0]:l[1] for l in response.json()[1]}
 
     for name in sorted(motifs, key=lambda k: int(k[6:])):
+        if args.select and int(name[6:]) not in [int(x) for x in args.select.split(',')]:
+            continue
         ma = {'name': name, 'annotations': motif_annotations[name], 'features': []}
         # read fragments and losses
         for f in motifs[name]:
@@ -208,6 +210,7 @@ def arg_parser():
     ap.add_argument('-o', '--doc_m2m_overlap_threshold', help="Threshold on motif-spectrum overlap score (default: %(default)s)", default=0.3, type=float)
     ap.add_argument('-p', '--doc_m2m_prob_threshold', help="Threshold on motif-spectrum probability (default: %(default)s)", default=0.01, type=float)
     ap.add_argument('-i', '--minrelint', help="Threshold on intensity relative to basepeak (default: %(default)s)", default=0.05, type=float)
+    ap.add_argument('-s', '--select', help='Select motifs to annotate, as comma seperated list (default: %(default)s)', default=None)
     ap.add_argument('-m', '--mode', help="Ionisation mode (default: %(default)s)", default=1, choices=[-1,1], type=float)
     ap.add_argument('-c', '--chemspider', help="Get structures from ChemSpider (default: %(default)s)", default=False, action='store_true')
     ap.add_argument('-a', '--all_motifs', help="Process not only the annotated motifs (default: %(default)s)", default=False, action='store_true')
