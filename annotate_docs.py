@@ -48,7 +48,7 @@ scan = {} # dict containing de scanid for a spectrum name
 scans_for_molid = {} # dict containing lists of scanids for each molid
 motifspectra = {}
 doc_annotations = []
-loaders = {'GNPS': LoadGNPS, 'MSP': LoadMSP}
+loaders = {'GNPS': LoadGNPS, 'MSP': LoadMSP, 'MGF': LoadMGF}
 
 
 def loss2smiles(molblock, atomlist):
@@ -72,7 +72,10 @@ def read_spectra():
     for i in ms1:
         peaklists[rt] = []
         meta = metadata[i.name]
-        compound = meta['annotation'].replace('"','')
+        if 'annotation' in meta:
+            compound = meta['annotation'].replace('"','')
+        else:
+            compound = meta['id']
         if not db_exists:
             if args.chemspider:
                 csresults = cs.search(meta['InChIKey'][:14])
@@ -90,8 +93,10 @@ def read_spectra():
                 scans_for_molid[molid].append(rt)
             else:
                 scans_for_molid[molid] = [rt]
-        scan[i.name] = rt
-        spectrum[rt] = i.name
+        # scan[i.name] = rt
+        # spectrum[rt] = i.name
+        scan[compound] = rt
+        spectrum[rt] = compound
         rt += 2
     if not db_exists:
         for i in ms2:
@@ -130,6 +135,8 @@ def create_doc_annotations():
     # doc_features = list(json.load(open('tmp.json', 'r')))
 
     for doc, feature_list, motifs in doc_features:
+        if doc not in scan:
+            continue
         results = db_session.query(Fragment.mz, Molecule.mol).\
                 filter(Fragment.scanid == scan[doc]).\
                 join(Molecule, Fragment.molid==Molecule.molid).all()
@@ -155,13 +162,6 @@ def create_doc_annotations():
                     continue # avoid redundant matches
                 smiles = frag.smiles if feature_type == 'fragment' else loss2smiles(parent_mol, frag.atoms)
                 match = {'smiles': smiles, 'mz': frag.mz, 'fragatoms': frag.atoms}
-                if feature_type == 'fragment':
-                    try:
-                        feature_mol = Chem.MolFromSmiles(smiles)
-                        AllChem.Compute2DCoords(feature_mol)
-                        match['mol'] = Chem.MolToMolBlock(feature_mol)
-                    except:
-                        pass
                 feature['matches'].append(match)
             ddoc['features'].append(feature)
         doc_annotations.append(ddoc)
@@ -180,7 +180,7 @@ def arg_parser():
     ap.add_argument('-i', '--minrelint', help="Threshold on intensity relative to basepeak (default: %(default)s)", default=0.05, type=float)
     ap.add_argument('-m', '--mode', help="Ionisation mode (default: %(default)s)", default=1, choices=[-1,1], type=float)
     ap.add_argument('-c', '--chemspider', help="Get structures from ChemSpider (default: %(default)s)", default=False, action='store_true')
-    ap.add_argument('-l', '--loader', help="Specify which loader to use (default: %(default)s)", default='GNPS', choices=['GNPS','MSP'])
+    ap.add_argument('-l', '--loader', help="Specify which loader to use (default: %(default)s)", default='GNPS', choices=['GNPS', 'MSP', 'MGF'])
     ap.add_argument('experiment_id', help="Experiment ID", type=int)
     ap.add_argument('magma_db', help="(Non-)existing magma database", type=str)
     ap.add_argument('spectra_path', help="path to spectra", type=str)
