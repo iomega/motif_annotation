@@ -19,8 +19,15 @@ python motif_annotation/annotate_motifs.py -i 0.05 191 gnps/gnps.db gnps/spectra
 
 mkdir massbank
 cp -r [path]/spectra_massbank massbank
-python motif_annotation/annotate_motifs.py -i 0.001 190 massbank/massbank.db massbank/spectra_massbank/ >massbank/annotation.json
+python motif_annotation/annotate_motifs.py -i 0.001 190 massbank/massbank.db massbank/spectra_massbank/
+>massbank/annotation.json
 ```
+Or run using Docker:
+```
+sudo docker run -v $PWD/massbank:/data annotate_docs -i 0.001 190 data/massbank.db data/spectra_massbank/
+>massbank/magma_annotation.json
+```
+
 # Run create_html_view.py
 ```
 wget https://web.chemdoodle.com/downloads/ChemDoodleWeb-8.0.0.zip
