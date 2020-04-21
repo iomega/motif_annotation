@@ -73,9 +73,10 @@ def read_spectra():
     for i in ms1:
         peaklists[rt] = []
         meta = metadata[i.name]
-        compound = i.name
-        if 'molname_field' in args:
+        if args.molname_field:
             compound = meta[args.molname_field]
+        else:
+            compound = i.name
         molid = struct_engine.add_smiles(meta['smiles'], compound)
         if molid in scans_for_molid:
             scans_for_molid[molid].append(rt)
