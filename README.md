@@ -5,7 +5,6 @@ Annotate ms2lda motifs using MAGMa
 - python2
 - sqlalchemy
 - rdkit
-- chempipy
 - magma
 
 # Install / Run annotate_motifs.py

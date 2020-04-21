@@ -1,3 +1,5 @@
+#!/usr/bin/env python2
+
 """
 Script to annotate MS2LDA documents using MAGMa
 
@@ -25,11 +27,11 @@ doc_annotations = [{
 import sys
 import magma
 from magma.models import Molecule, Fragment
+from magma.pars import Hmass, elmass
 from sqlalchemy import create_engine, between #collate
 from sqlalchemy.orm import sessionmaker #, exc
 from rdkit import Chem
 from rdkit.Chem import AllChem
-from chemspipy import ChemSpider
 import json
 sys.path.insert(0, './ms2ldaviz/lda/code')
 from ms2lda_feature_extraction import *
@@ -40,7 +42,6 @@ from argparse import ArgumentParser, RawDescriptionHelpFormatter
 # --- globals ---
 version = '0.1.0'
 
-cs = ChemSpider('b07b7eb2-0ba7-40db-abc3-2a77a7544a3d')
 server_address = "http://ms2lda.org/"
 
 spectrum = {} # dict containing de spectrum name for a scanid
@@ -72,31 +73,19 @@ def read_spectra():
     for i in ms1:
         peaklists[rt] = []
         meta = metadata[i.name]
-        if 'annotation' in meta:
-            compound = meta['annotation'].replace('"','')
+        compound = i.name
+        if 'molname_field' in args:
+            compound = meta[args.molname_field]
+        molid = struct_engine.add_smiles(meta['smiles'], compound)
+        if molid in scans_for_molid:
+            scans_for_molid[molid].append(rt)
         else:
-            compound = meta['id']
-        if not db_exists:
-            if args.chemspider:
-                csresults = cs.search(meta['InChIKey'][:14])
-                if csresults:
-                    try:
-                        molid = struct_engine.add_structure(csresults[0].mol_2d, compound, 0.0, 0)
-                    except:
-                        molid = struct_engine.add_smiles(meta['smiles'], compound)
-                else:
-                    sys.stderr.write('--> No Chemspider for ' + compound + '\n')
-                    molid = struct_engine.add_smiles(meta['smiles'], compound)
-            else:
-                molid = struct_engine.add_smiles(meta['smiles'], compound)
-            if molid in scans_for_molid:
-                scans_for_molid[molid].append(rt)
-            else:
-                scans_for_molid[molid] = [rt]
-        # scan[i.name] = rt
-        # spectrum[rt] = i.name
-        scan[compound] = rt
-        spectrum[rt] = compound
+            scans_for_molid[molid] = [rt]
+        magma_session.commit()
+        mim = db_session.query(Molecule.mim).filter_by(molid=molid).one()[0]
+        meta['parentmass'] = mim + args.mode * (Hmass-elmass)
+        scan[i.name] = rt
+        spectrum[rt] = i.name
         rt += 2
     if not db_exists:
         for i in ms2:
@@ -104,7 +93,7 @@ def read_spectra():
         for rt in peaklists:
             if len(peaklists[rt]) > 0:
                 maxint = sorted(peaklists[rt], key = lambda p: p[1])[-1][1]
-                peaklist = [p for p in peaklists[rt] if p[1] > args.minrelint * maxint]
+                peaklist = [p for p in peaklists[rt]]
                 ms_data_engine.store_peak_list(
                     rt,
                     rt,
@@ -122,12 +111,6 @@ def run_magma_annotate():
 
 
 def create_doc_annotations():
-    # create sqlalchemy connection to magma database
-    engine = create_engine('sqlite:///' + args.magma_db)
-    session = sessionmaker()
-    session.configure(bind=engine)
-    db_session = session()
-
     url = server_address + 'basicviz/get_all_doc_data/{}'.format(args.experiment_id)
     response = requests.get(url)
     doc_features = response.json()
@@ -154,9 +137,9 @@ def create_doc_annotations():
             feature = {'name': f, 'intensity': i, 'type': feature_type, 'matches': []}
             massbin = float(massbin)
             if feature_type == 'fragment':
-                matching_frags = frags.filter(between(Fragment.mz, massbin-0.0025, massbin+0.0025)).all()
+                matching_frags = frags.filter(between(Fragment.mz, massbin-args.binsize/2, massbin+args.binsize/2)).all()
             else:
-                matching_frags = frags.filter(between(parent_mz - Fragment.mz, massbin-0.0025, massbin+0.0025)).all()
+                matching_frags = frags.filter(between(parent_mz - Fragment.mz, massbin-args.binsize/2, massbin+args.binsize/2)).all()
             for frag in matching_frags:
                 if frag.atoms in [m['fragatoms'] for m in feature['matches']]:
                     continue # avoid redundant matches
@@ -177,10 +160,19 @@ class stdout2stderr(list):
 def arg_parser():
     ap = ArgumentParser(description=__doc__, formatter_class=RawDescriptionHelpFormatter)
     ap.add_argument('-v', '--version', action='version', version='%(prog)s ' + str(version))
-    ap.add_argument('-i', '--minrelint', help="Threshold on intensity relative to basepeak (default: %(default)s)", default=0.05, type=float)
-    ap.add_argument('-m', '--mode', help="Ionisation mode (default: %(default)s)", default=1, choices=[-1,1], type=float)
-    ap.add_argument('-c', '--chemspider', help="Get structures from ChemSpider (default: %(default)s)", default=False, action='store_true')
-    ap.add_argument('-l', '--loader', help="Specify which loader to use (default: %(default)s)", default='GNPS', choices=['GNPS', 'MSP', 'MGF'])
+    ap.add_argument('-l', '--loader', help="Specify which loader to use (default: %(default)s)",
+                    default='GNPS', choices=['GNPS', 'MSP', 'MGF'])
+    ap.add_argument('-a', '--loader_arguments', help="Dictionary (as JSON) with argements for the MS loader (default: %(default)s)",
+                    default='{}', type=str)
+    ap.add_argument('-b', '--binsize', help="Bin size used in MS2LDA experiment (Da) (default: %(default)s)",
+                    default=0.005,type=float)
+    ap.add_argument('-m', '--mode', help="Ionisation mode (default: %(default)s)",
+                    default=1, choices=[-1,1], type=float)
+    ap.add_argument('-n', '--molname_field', help="Meta data field containing the compound name", type=str)
+    ap.add_argument('-p', '--mz_precision', help="Maximum relative m/z error (ppm) (default: %(default)s)",
+                    default=5,type=float)
+    ap.add_argument('-q', '--mz_precision_abs', help="Maximum absolute m/z error (Da) (default: %(default)s)",
+                    default=0.001,type=float)
     ap.add_argument('experiment_id', help="Experiment ID", type=int)
     ap.add_argument('magma_db', help="(Non-)existing magma database", type=str)
     ap.add_argument('spectra_path', help="path to spectra", type=str)
@@ -194,23 +186,29 @@ args = arg_parser().parse_args(sys.argv[1:])
 
 # if magma_db exists it is reused, skipping the parts that create and run the magma job
 db_exists = os.path.isfile(args.magma_db)
+magma_session =   magma.MagmaSession(args.magma_db, 'ms2lda_dataset', 'debug')
+struct_engine =   magma_session.get_structure_engine(pubchem_names=True)
 if not db_exists:
-    magma_session =   magma.MagmaSession(args.magma_db, 'ms2lda_dataset', 'debug')
     ms_data_engine =  magma_session.get_ms_data_engine(
                       ionisation_mode=args.mode,
                       abs_peak_cutoff=0,
-                      mz_precision=20,
-                      mz_precision_abs=0.005)
-    struct_engine =   magma_session.get_structure_engine(pubchem_names=True)
+                      mz_precision=args.mz_precision,
+                      mz_precision_abs=args.mz_precision_abs)
     annotate_engine = magma_session.get_annotate_engine(
                       ms_intensity_cutoff=0,
                       msms_intensity_cutoff=0)
+
+# create sqlalchemy connection to magma database
+engine = create_engine('sqlite:///' + args.magma_db)
+session = sessionmaker()
+session.configure(bind=engine)
+db_session = session()
 
 if os.path.isdir(args.spectra_path):
     files = glob.glob(args.spectra_path + '/*')
 else:
     files = [args.spectra_path]
-loader = loaders[args.loader]()
+loader = loaders[args.loader](**json.loads(args.loader_arguments))
 with stdout2stderr():
     ms1, ms2, metadata = loader.load_spectra(files)
 read_spectra()
