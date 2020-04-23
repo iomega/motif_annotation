@@ -21,6 +21,6 @@ motif_annotation/annotate_docs.py -m 1 -q 0.1 -l MGF -a '{"name_field": "title",
 ```
 Or run using Docker:
 ```
-sudo docker run -v $PWD:/data annotate_docs 190 data/exp190.db data/spectra_massbank/
+sudo docker run -v $PWD:/data ms2lda/annotate_docs 190 data/exp190.db data/spectra_massbank/
 >magma_annotation.json
 ```
